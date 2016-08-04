@@ -5,3 +5,4 @@
 #include <string.h>
 
 char** strsplit(char* str, char* delimiter, int* outputlen);
+char* concat(char* str1, char* str2);

@@ -9,18 +9,6 @@
 #include "nr_network_processes.h"
 #include "nr_strop.h"
 
-char* concat(char *str1, char *str2) {
-    if (!str1 || !str2) {
-        return NULL;
-    }
-    size_t len1 = strlen(str1), len2 = strlen(str2);
-    char *str = malloc(len1 + len2 + 1);
-    memcpy(str, str1, len1);
-    memcpy(str + len1, str2, len2);
-    str[len1 + len2] = 0;
-    return str;
-}
-
 char* nr_exec(char* cmd) {
     char buffer[256];
     FILE *pipe = popen(cmd, "r");
@@ -35,32 +23,79 @@ char* nr_exec(char* cmd) {
     return output;
 }
 
-nr_process_list_t *nr_get_processes() {
-    nr_process_list_t* list;
-    list = malloc(sizeof(nr_process_t*));
-    char* cmd = "tasklist | find /I \"Console\"";
-    char *str = nr_exec(cmd);
-    char* delimiter = "\n";
-    int linecount, lnindex;
-    char** split = strsplit(str, delimiter, &linecount);
-    if (!split) return NULL;
-    list->processes = malloc(linecount*sizeof(nr_process_t*));
-    int splitcount;
+nr_process_t *nr_get_process_from_list(nr_process_list_t* list, int pid) {
+    if (list->count == 0) return NULL;
+    int i;
+    for (i = 0; i < list->count; i++)
+        if (list->processes[i].pid == pid)
+            return &list->processes[i];
+    return NULL;
+}
+
+void nr_get_networked_processes_alloc(nr_process_list_t *list) {
+    char *cmd = "netstat -no -p tcp | find /I \"TCP\"";
+    char* output = nr_exec(cmd);
+    char *delimiter = "\n";
+    int lncount, lnindex, splitcount;
     char** elements;
-    list->count = (size_t) linecount;
-    for (lnindex = 0; lnindex < linecount; lnindex++) {
-        elements = strsplit(split[lnindex], " ", &splitcount);
-        list->processes[lnindex].name = strdup(elements[0]);
-        list->processes[lnindex].pid = (unsigned int) atoi(elements[1]);
-        //list->processes[lnindex].memory_size = 1234;
-       // if (elements[5][0] == 'K')
-       //     list->processes[lnindex].pid = list->processes[lnindex].pid * 1000;
+    char** lines = strsplit(output, delimiter, &lncount);
+    free(output);
+    if (!lines) return;
+    list->processes = malloc(sizeof(nr_process_t*));
+    list->count = 0;
+
+    int pid, curindex = 0;
+    nr_process_t *process;
+    for (lnindex = 0; lnindex < lncount; lnindex++) {
+        elements = strsplit(lines[lnindex], " ", &splitcount);
+        pid = atoi(elements[4]);
+        if (!(process = nr_get_process_from_list(list, pid))) {
+            list->processes = realloc(list->processes, ++list->count*sizeof(*list->processes));
+            process = &list->processes[list->count-1];
+            process->pid = (unsigned int) pid;
+            process->ip_count = 0;
+        }
+        if (!process->ip_count) {
+            process->ip_count = 0;
+            curindex = process->ip_count++;
+            process->ip_addresses = malloc(sizeof(nr_ip_address_t *));
+        } else {
+            curindex = process->ip_count++;
+            process->ip_addresses = realloc(process->ip_addresses, process->ip_count * sizeof(*process->ip_addresses));
+        }
+        process->ip_addresses[curindex].ip_address = strdup(elements[2]);
+
         free(elements);
-        //printf("%d: Name: %s\t\tPid: %d\t\tSize: %d\n", lnindex, process.name, process.pid, process.memory_size);
     }
-    free (cmd);
-    free(str);
-    free(delimiter);
-    free(split);
-    return list;
+    free (lines);
+}
+
+void nr_link_process_info(nr_process_list_t *list) {
+    if (list->count == 0) return;
+    char *cmd = "tasklist | find /I \"Console\"";
+    char *output = nr_exec(cmd);
+    char *delimiter = "\n";
+    int lncount, lnindex, splitcount;
+    char** elements;
+    char** lines = strsplit(output, delimiter, &lncount);
+    free(output);
+    if (!lines) return;
+
+    nr_process_t *process;
+    for (lnindex = 0; lnindex < lncount; lnindex++) {
+        elements = strsplit(lines[lnindex], " ", &splitcount);
+        if (!(process = nr_get_process_from_list(list, atoi(elements[1]))))
+            continue;
+        process->name = strdup(elements[0]);
+        process->memory_size = 4321;
+        free(elements);
+    }
+    free(lines);
+}
+
+void nr_process_list_free(nr_process_list_t *list) {
+    int i;
+    for (i = 0; i < list->count; i++)
+        free(list->processes[i].ip_addresses);
+    free(list->processes);
 }
